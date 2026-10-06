@@ -97,12 +97,55 @@ def iso_date(value):
         raise ValueError('Ngày cần định dạng YYYY-MM-DD')
     return date.fromisoformat(value)
 
+def create_invoice(db, data, owner_id):
+    room = db.execute('SELECT * FROM rooms WHERE id=? AND owner_id=?',(integer(data,'room_id'),owner_id)).fetchone()
+    if not room or not room['tenant']: raise ValueError('Phòng chưa có hợp đồng')
+    month = text(data,'month',7)
+    if not re.fullmatch(r'\d{4}-\d{2}',month): raise ValueError('Tháng cần định dạng YYYY-MM')
+    iso_date(month+'-01')
+    if month < room['start'][:7] or month > room['end'][:7]:
+        raise ValueError('Tháng hóa đơn nằm ngoài thời hạn hợp đồng')
+    keys = ['electric_old','electric_new','water_old','water_new','electric_rate','water_rate','fee']
+    eo,en,wo,wn,er,wr,fee = [integer(data,k) for k in keys]
+    if en < eo or wn < wo: raise ValueError('Chỉ số mới phải lớn hơn hoặc bằng chỉ số cũ')
+    total = room['rent']+(en-eo)*er+(wn-wo)*wr+fee
+    if total > 1000000000: raise ValueError('Tổng hóa đơn vượt giới hạn 1 tỷ đồng')
+    db.execute('INSERT INTO invoices(room_id,month,electric_old,electric_new,water_old,water_new,electric_rate,water_rate,rent,fee,total,owner_id,tenant_name,tenant_phone,room_name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(room['id'],month,eo,en,wo,wn,er,wr,room['rent'],fee,total,owner_id,room['tenant'],room['phone'],room['name']))
+
 def mutate(path, data, owner_id):
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         if path == '/api/rooms':
             name = text(data,'name',80)
             db.execute('INSERT INTO rooms(name,rent,owner_id) VALUES(?,?,?)', (name, integer(data,'rent'),owner_id))
+        elif path == '/api/room-update':
+            rid=integer(data,'id')
+            cur=db.execute('UPDATE rooms SET name=?,rent=? WHERE id=? AND owner_id=?',(text(data,'name',80),integer(data,'rent'),rid,owner_id))
+            if not cur.rowcount: raise ValueError('Không tìm thấy phòng')
+        elif path == '/api/room-delete':
+            rid=integer(data,'id')
+            room=db.execute('SELECT * FROM rooms WHERE id=? AND owner_id=?',(rid,owner_id)).fetchone()
+            if not room: raise ValueError('Không tìm thấy phòng')
+            if data.get('confirmation')!=room['name']: raise ValueError('Nhập đúng tên phòng để xác nhận xóa')
+            db.execute('DELETE FROM payments WHERE owner_id=? AND invoice_id IN (SELECT id FROM invoices WHERE room_id=? AND owner_id=?)',(owner_id,rid,owner_id))
+            db.execute('DELETE FROM invoices WHERE room_id=? AND owner_id=?',(rid,owner_id))
+            db.execute('DELETE FROM repairs WHERE room_id=? AND owner_id=?',(rid,owner_id))
+            db.execute('DELETE FROM rooms WHERE id=? AND owner_id=?',(rid,owner_id))
+        elif path == '/api/reset':
+            if data.get('confirmation')!='XÓA DỮ LIỆU': raise ValueError('Nhập XÓA DỮ LIỆU để xác nhận')
+            user=db.execute('SELECT * FROM users WHERE id=?',(owner_id,)).fetchone()
+            password=data.get('password')
+            if not user or not isinstance(password,str) or not 10<=len(password)<=128 or not hmac.compare_digest(password_hash(password,user['salt']),user['password_hash']):
+                raise ValueError('Mật khẩu không đúng')
+            for table in ['payments','invoices','repairs','rooms']:
+                db.execute(f'DELETE FROM {table} WHERE owner_id=?',(owner_id,))
+        elif path == '/api/invoices-batch':
+            items=data.get('items')
+            if not isinstance(items,list) or not 1<=len(items)<=200: raise ValueError('Chọn từ 1 đến 200 phòng')
+            for item in items:
+                if not isinstance(item,dict): raise ValueError('Chỉ số phòng không hợp lệ')
+                readings={k:item.get(k) for k in ['room_id','electric_old','electric_new','water_old','water_new']}
+                create_invoice(db,{**data,**readings},owner_id)
         elif path == '/api/contracts':
             room = db.execute('SELECT * FROM rooms WHERE id=? AND owner_id=?',(integer(data,'room_id'),owner_id)).fetchone()
             if not room: raise ValueError('Không tìm thấy phòng')
@@ -111,19 +154,7 @@ def mutate(path, data, owner_id):
             if end <= start: raise ValueError('Ngày kết thúc phải sau ngày bắt đầu')
             db.execute('UPDATE rooms SET tenant=?,phone=?,start=?,end=?,deposit=? WHERE id=?',(tenant,text(data,'phone',30,False),str(start),str(end),integer(data,'deposit'),room['id']))
         elif path == '/api/invoices':
-            room = db.execute('SELECT * FROM rooms WHERE id=? AND owner_id=?',(integer(data,'room_id'),owner_id)).fetchone()
-            if not room or not room['tenant']: raise ValueError('Phòng chưa có hợp đồng')
-            month = text(data,'month',7)
-            if not re.fullmatch(r'\d{4}-\d{2}',month): raise ValueError('Tháng cần định dạng YYYY-MM')
-            iso_date(month+'-01')
-            if month < room['start'][:7] or month > room['end'][:7]:
-                raise ValueError('Tháng hóa đơn nằm ngoài thời hạn hợp đồng')
-            keys = ['electric_old','electric_new','water_old','water_new','electric_rate','water_rate','fee']
-            eo,en,wo,wn,er,wr,fee = [integer(data,k) for k in keys]
-            if en < eo or wn < wo: raise ValueError('Chỉ số mới phải lớn hơn hoặc bằng chỉ số cũ')
-            total = room['rent']+(en-eo)*er+(wn-wo)*wr+fee
-            if total > 1000000000: raise ValueError('Tổng hóa đơn vượt giới hạn 1 tỷ đồng')
-            db.execute('INSERT INTO invoices(room_id,month,electric_old,electric_new,water_old,water_new,electric_rate,water_rate,rent,fee,total,owner_id,tenant_name,tenant_phone,room_name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(room['id'],month,eo,en,wo,wn,er,wr,room['rent'],fee,total,owner_id,room['tenant'],room['phone'],room['name']))
+            create_invoice(db,data,owner_id)
         elif path == '/api/payments':
             inv = db.execute('SELECT * FROM invoices WHERE id=? AND owner_id=?',(integer(data,'id'),owner_id)).fetchone()
             if not inv: raise ValueError('Không tìm thấy hóa đơn')
@@ -247,7 +278,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.respond(403,{'error':'Yêu cầu không hợp lệ'}); return
         try:
             length=int(self.headers.get('Content-Length',0))
-            if not 0 < length <= 20000: raise ValueError('Dữ liệu quá lớn hoặc rỗng')
+            if not 0 < length <= (100000 if self.path=='/api/invoices-batch' else 20000): raise ValueError('Dữ liệu quá lớn hoặc rỗng')
             data=json.loads(self.rfile.read(length))
             if not isinstance(data,dict): raise ValueError('Dữ liệu không hợp lệ')
             if self.path in ['/api/login','/api/register']:

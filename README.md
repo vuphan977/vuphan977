@@ -52,7 +52,7 @@ python -m unittest discover -s tests -v
 node --check public/app.js
 ```
 
-Bao gồm 21 kiểm thử: nghiệp vụ hóa đơn, thanh toán một phần, dữ liệu qua khởi động lại, đăng nhập/đăng xuất, CSRF, tách dữ liệu, yêu cầu thu tiền đồng thời, giới hạn đăng nhập, phiên hết hạn/giả mạo, yêu cầu thu tiền gửi lại đồng thời, dữ liệu sai kiểu, lịch sử người thuê và vòng sao lưu/khôi phục.
+Bao gồm 29 kiểm thử: nghiệp vụ hóa đơn, thanh toán một phần, dữ liệu qua khởi động lại, đăng nhập/đăng xuất, CSRF, tách dữ liệu, yêu cầu thu tiền đồng thời, giới hạn đăng nhập, phiên hết hạn/giả mạo, yêu cầu thu tiền gửi lại đồng thời, dữ liệu sai kiểu, lịch sử người thuê và vòng sao lưu/khôi phục.
 
 Kiểm thử trình duyệt cần Playwright và Chromium. Trong cloud hiện tại chúng có sẵn. Chạy với database riêng, không dùng dữ liệu vận hành:
 
@@ -67,3 +67,18 @@ Bài test tạo tài khoản và dữ liệu thử, qua 11 màn hình, dữ li�
 ## Trước khi bán SaaS công khai
 
 Đây là bản phát triển, chưa triển khai production. Cần reverse proxy HTTPS và `COOKIE_SECURE=1` (chỉ bật khi truy cập HTTPS), server triển khai phù hợp, xác minh email/khôi phục mật khẩu, theo dõi lỗi, sao lưu định kỳ ngoài máy, quản lý thuê bao và đối soát ngân hàng. Bộ giới hạn IP đang dùng IP kết nối trực tiếp; khi qua proxy cần cấu hình chính xác IP khách hàng. Hợp đồng là bản ghi thời hạn, chưa có văn bản pháp lý hoặc lịch sử thay đổi người thuê. Nhật ký hiện theo dõi các khoản thu, chưa phải audit log mọi thay đổi hệ thống. Chưa có thông báo tự động, AI hoặc tính phí thuê bao.
+
+## Xóa phòng, reset và chốt tháng (bản mới)
+
+- **Phòng → Xóa phòng**: nhập chính xác tên phòng để xác nhận. Xóa cả hợp đồng, hóa đơn, khoản thu, công nợ và báo hỏng liên quan. Không thể hoàn tác trong ứng dụng; nên xuất dữ liệu trước.
+- **Dữ liệu → Reset về tài khoản trống**: nhập `XÓA DỮ LIỆU` và mật khẩu hiện tại. Chỉ xóa dữ liệu quản lý của tài khoản đang đăng nhập; giữ tài khoản, không tác động chủ nhà khác. Sau khởi động lại cũng không tự sinh phòng mẫu. Reset xóa thông tin QR đã lưu trên trình duyệt hiện tại; các trình duyệt khác có thể còn thông tin QR cục bộ.
+- **Phòng → Sửa phòng**: đổi tên và giá thuê. Hóa đơn đã lập giữ tên/giá gốc. Có tìm theo phòng/người thuê và lọc tình trạng thuê.
+- **Điện nước → Chốt điện nước nhiều phòng**: chọn tháng, đơn giá, phí dịch vụ; chọn các phòng, nhập chỉ số mới. Lấy chỉ số cũ từ hóa đơn gần nhất trước tháng chọn, cho phép sửa khi cần. Phòng ngoài thời hạn hợp đồng hoặc đã có hóa đơn tháng đó sẽ không xuất hiện trong danh sách. Lập tối đa 200 hóa đơn trong một giao dịch; một phòng sai sẽ hủy toàn bộ lần lập, không tạo dữ liệu một phần. Đây là thao tác chủ nhà xác nhận, chưa tự phát hành theo lịch.
+
+Kiểm thử quản lý trong trình duyệt (server/database thử riêng như ở trên):
+
+```sh
+TEST_URL=http://127.0.0.1:3001 node tests/browser-management.cjs
+```
+
+Bài test này thực sự xóa/reset dữ liệu của tài khoản thử do chính nó tạo. Không chạy trên cơ sở dữ liệu vận hành.
