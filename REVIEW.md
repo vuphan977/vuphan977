@@ -12,7 +12,7 @@
 
 ## Đã kiểm chứng trong môi trường thử
 
-56 kiểm thử Python; 4 bài kiểm thử trình duyệt: nghiệp vụ, quản lý phòng/reset, tài khoản người thuê/thông báo và tài khoản theo phòng/trả phòng. Bao gồm 200 phòng, giao diện điện thoại, thanh toán đồng thời, chống lặp khoản thu, phân quyền và phản hồi mạng đến sai thứ tự.
+56 kiểm thử Python; 5 bài kiểm thử trình duyệt: nghiệp vụ, quản lý phòng/reset, tài khoản người thuê/thông báo và tài khoản theo phòng/trả phòng. Bao gồm 200 phòng, giao diện điện thoại, thanh toán đồng thời, chống lặp khoản thu, phân quyền và phản hồi mạng đến sai thứ tự. Bài bổ sung PWA kiểm tra manifest/biểu tượng, điều hướng điện thoại, hướng dẫn cài, chặn lưu khi mất mạng, mở offline và kết nối lại; mô phỏng điện thoại trong Chromium, chưa cài trên máy thật.
 
 Docker build và bộ app/Caddy/backup đã chạy. HTTPS nội bộ được kiểm tra với chứng chỉ gốc tin cậy; cookie Secure/HttpOnly/SameSite=Strict, đóng đăng ký chủ nhà, tạo chủ nhà qua terminal, sao lưu/khôi phục và thu hồi phiên. QR được kiểm tra với dịch vụ giả lập, chưa xác minh giao dịch ngân hàng thực.
 
@@ -26,3 +26,7 @@ GitHub Actions được cấu hình chạy backend, kiểm tra cú pháp JavaScr
 4. Duyệt cho người dùng thật sử dụng sau khi các bước trên đạt.
 
 Hiện chưa có máy chủ/tên miền hoặc quyền hạ tầng được kết nối trong phiên này. Chưa thể gọi bản này là hệ thống đã vận hành 24/7. Phạm vi MVP chưa gồm AI, gửi email/Zalo, thu phí gói SaaS hoặc tự đối soát ngân hàng.
+
+## Bổ sung app điện thoại
+
+PWA Android/iPhone cài từ trình duyệt đã được chuẩn bị. Xem [hướng dẫn điện thoại](deploy/MOBILE.md). Phát hành Google Play/App Store, APK/IPA và thông báo khi app đóng chưa nằm trong bản này. Trước khi giao, nghiệm thu cài và mở trên thiết bị thật từ URL HTTPS.

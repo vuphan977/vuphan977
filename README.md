@@ -154,3 +154,7 @@ Không chạy các bài test trình duyệt trên DB vận hành. Chúng thực 
 ## Triển khai vận hành
 
 Xem [hướng dẫn Docker + HTTPS + sao lưu](deploy/README.md). Bộ triển khai đóng đăng ký chủ nhà công khai, tắt dữ liệu mẫu và lưu database trong volume riêng. Cần nghiệm thu trên máy chủ/tên miền thật, sao lưu ngoài máy và giám sát trước khi dùng thương mại.
+
+## App điện thoại
+
+Roomly có bản PWA cài từ trình duyệt lên màn hình chính Android/iPhone, điều hướng dưới và màn hình mất mạng. Xem [hướng dẫn cài và phạm vi kiểm chứng](deploy/MOBILE.md). Cần URL HTTPS vận hành để dùng trên điện thoại thật; hiện chưa phát hành APK/IPA hoặc lên cửa hàng. Chạy bài kiểm thử bổ sung `TEST_URL=http://127.0.0.1:3010 node tests/browser-mobile.cjs` với server/database thử riêng như hướng dẫn.

@@ -416,6 +416,7 @@ def reminder_worker(stop,interval=60):
         stop.wait(interval)
 
 class Handler(SimpleHTTPRequestHandler):
+    extensions_map = {**SimpleHTTPRequestHandler.extensions_map, '.webmanifest': 'application/manifest+json'}
     def __init__(self,*args,**kwargs): super().__init__(*args,directory=str(ROOT/'public'),**kwargs)
     def end_headers(self):
         self.send_header('X-Content-Type-Options','nosniff')

@@ -1,3 +1,4 @@
+const {go}=require('./navigation.cjs');
 const {chromium}=require('playwright');
 const assert=require('node:assert/strict');
 (async()=>{
@@ -16,53 +17,53 @@ const assert=require('node:assert/strict');
  await page.locator('#auth-submit').click();
  await page.locator('main').waitFor({state:'visible'});
  for(const name of ['Phòng','Người thuê','Hợp đồng','Điện nước','Hóa đơn','QR thanh toán','Công nợ','Báo hỏng','Lịch sử thu tiền','Dữ liệu','Dashboard']){
-  await page.locator(`[data-page="${name}"]`).click();
+  await go(page,name);
   assert.ok(await page.locator('#content').innerHTML());
  }
- await page.locator('[data-page="Phòng"]').click();await page.locator('#primary').click();
+ await go(page,'Phòng');await page.locator('#primary').click();
  await page.locator('#fields [name=name]').fill('UI.201');await page.locator('#fields [name=rent]').fill('4000000');await page.locator('#form [type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});await page.waitForFunction(()=>!document.querySelector('#form [type=submit]').disabled);if(await page.locator('#credential-modal').isVisible())await page.locator('#credential-close').click();
  const card=page.locator('.room').filter({has:page.locator('h2',{hasText:'UI.201'})});
  await card.locator('[data-contract]').click();
  await page.locator('#fields [name=tenant]').fill('Khách UI');await page.locator('#fields [name=phone]').fill('0901234567');
  await page.locator('#fields [name=start]').fill('2026-01-01');await page.locator('#fields [name=end]').fill('2027-01-01');
  await page.locator('#form [type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});await page.waitForFunction(()=>!document.querySelector('#form [type=submit]').disabled);if(await page.locator('#credential-modal').isVisible())await page.locator('#credential-close').click();
- await page.locator('[data-page="Điện nước"]').click();await page.locator('#primary').click();
+ await go(page,'Điện nước');await page.locator('#primary').click();
  await page.locator('#fields [name=room_id]').selectOption({label:'UI.201 · Khách UI'});
  await page.locator('#fields [name=electric_new]').fill('50');await page.locator('#fields [name=water_new]').fill('5');
  await page.locator('#fields [name=electric_old]').fill('100');await page.locator('#form [type=submit]').click();await page.waitForFunction(()=>document.querySelector('#error').textContent.length>0);assert.ok(await page.locator('#modal').isVisible());await page.locator('#fields [name=electric_old]').fill('0');
  await page.locator('#form [type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});await page.waitForFunction(()=>!document.querySelector('#form [type=submit]').disabled);if(await page.locator('#credential-modal').isVisible())await page.locator('#credential-close').click();
- await page.locator('[data-page="Công nợ"]').click();
+ await go(page,'Công nợ');
  const row=page.locator('tbody tr').filter({hasText:'UI.201'});await row.locator('[data-pay]').click();
  await page.locator('#fields [name=amount]').fill('1000000');await page.locator('#fields [name=note]').fill('Tiền mặt');await page.locator('#form [type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});await page.waitForFunction(()=>!document.querySelector('#form [type=submit]').disabled);if(await page.locator('#credential-modal').isVisible())await page.locator('#credential-close').click();
- await page.locator('[data-page="Lịch sử thu tiền"]').click();assert.ok(await page.locator('tbody').innerText().then(s=>s.includes('Tiền mặt')));
- await page.locator('[data-page="Dữ liệu"]').click();
+ await go(page,'Lịch sử thu tiền');assert.ok(await page.locator('tbody').innerText().then(s=>s.includes('Tiền mặt')));
+ await go(page,'Dữ liệu');
  const downloadPromise=page.waitForEvent('download');await page.locator('#export-data').click();const download=await downloadPromise;assert.ok(download.suggestedFilename().endsWith('.json'));
  // Validate QR request construction without contacting a bank or the QR provider.
  let qrRequest;
  await page.route('https://img.vietqr.io/**',async route=>{qrRequest=new URL(route.request().url());await route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'})});
- await page.locator('[data-page="QR thanh toán"]').click();await page.locator('tbody tr').filter({hasText:'UI.201'}).locator('[data-qr]').click();
+ await go(page,'QR thanh toán');await page.locator('tbody tr').filter({hasText:'UI.201'}).locator('[data-qr]').click();
  await page.locator('#fields [name=bank]').fill('123');await page.locator('#fields [name=account]').fill('123456789');await page.locator('#fields [name=holder]').fill('TEST OWNER');await page.locator('#form [type=submit]').click();assert.ok((await page.locator('#error').innerText()).length>0);
  await page.locator('#fields [name=bank]').fill('970436');await page.locator('#form [type=submit]').click();await page.locator('.qr img').waitFor();
  await page.waitForFunction(()=>document.querySelector('.qr img').complete);
  assert.equal(qrRequest.searchParams.get('amount'),'3350000');assert.ok(qrRequest.searchParams.get('addInfo').includes('UI.201'));await page.locator('#close').click();
- await page.locator('[data-page="Báo hỏng"]').click();await page.locator('#primary').click();await page.locator('#fields [name=room_id]').selectOption({label:'UI.201 · Khách UI'});await page.locator('#fields [name=description]').fill('Vòi nước bị rò');await page.locator('#form [type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});await page.waitForFunction(()=>!document.querySelector('#form [type=submit]').disabled);if(await page.locator('#credential-modal').isVisible())await page.locator('#credential-close').click();
+ await go(page,'Báo hỏng');await page.locator('#primary').click();await page.locator('#fields [name=room_id]').selectOption({label:'UI.201 · Khách UI'});await page.locator('#fields [name=description]').fill('Vòi nước bị rò');await page.locator('#form [type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});await page.waitForFunction(()=>!document.querySelector('#form [type=submit]').disabled);if(await page.locator('#credential-modal').isVisible())await page.locator('#credential-close').click();
  const repair=page.locator('tbody tr').filter({hasText:'Vòi nước bị rò'});await repair.locator('[data-repair]').click();await page.waitForFunction(()=>document.querySelector('tbody').innerText.includes('Đang xử lý'));await repair.locator('[data-repair]').click();await page.waitForFunction(()=>document.querySelector('tbody').innerText.includes('Hoàn tất'));
- await page.locator('[data-page="Hợp đồng"]').click();await page.locator('tbody tr').filter({hasText:'UI.201'}).locator('[data-contract]').click();await page.locator('#fields [name=tenant]').fill('Khách kế tiếp');await page.locator('#fields [name=start]').fill('2027-01-01');await page.locator('#fields [name=end]').fill('2027-12-31');await page.locator('#form [type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});await page.waitForFunction(()=>!document.querySelector('#form [type=submit]').disabled);if(await page.locator('#credential-modal').isVisible())await page.locator('#credential-close').click();
- await page.locator('[data-page="Hóa đơn"]').click();assert.ok((await page.locator('tbody tr').filter({hasText:'UI.201'}).innerText()).includes('Khách UI'),'Historical tenant snapshot');
+ await go(page,'Hợp đồng');await page.locator('tbody tr').filter({hasText:'UI.201'}).locator('[data-contract]').click();await page.locator('#fields [name=tenant]').fill('Khách kế tiếp');await page.locator('#fields [name=start]').fill('2027-01-01');await page.locator('#fields [name=end]').fill('2027-12-31');await page.locator('#form [type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});await page.waitForFunction(()=>!document.querySelector('#form [type=submit]').disabled);if(await page.locator('#credential-modal').isVisible())await page.locator('#credential-close').click();
+ await go(page,'Hóa đơn');assert.ok((await page.locator('tbody tr').filter({hasText:'UI.201'}).innerText()).includes('Khách UI'),'Historical tenant snapshot');
  const current=await context.request.get(url+'/api/state').then(r=>r.json());
  for(let n=current.rooms.length;n<200;n++){
   const response=await context.request.post(url+'/api/rooms',{headers:{'X-Requested-With':'Roomly'},data:{name:n===199?'<img src=x onerror="window.xss=1">':'Stress.'+n,rent:3000000}});assert.equal(response.status(),200);
  }
- await page.reload();await page.locator('main').waitFor({state:'visible'});await page.locator('[data-page="Phòng"]').click();assert.equal(await page.locator('.room').count(),200);assert.equal(await page.evaluate(()=>window.xss),undefined);
+ await page.reload();await page.locator('main').waitFor({state:'visible'});await go(page,'Phòng');assert.equal(await page.locator('.room').count(),200);assert.equal(await page.evaluate(()=>window.xss),undefined);
  const other=await browser.newContext();
  const res=await other.request.post(url+'/api/register',{headers:{'X-Requested-With':'Roomly'},data:{name:'Other owner',email:'other-'+Date.now()+'@example.com',password:'other-password-123'}});assert.equal(res.status(),200);
  const otherState=await other.request.get(url+'/api/state').then(r=>r.json());assert.equal(otherState.rooms.length,0);assert.equal(otherState.invoices.length,0);
- const otherPage=await other.newPage();await otherPage.goto(url);await otherPage.locator('main').waitFor({state:'visible'});await otherPage.locator('[data-page="Phòng"]').click();assert.equal(await otherPage.locator('.room').count(),0);await other.close();
- await page.locator('[data-page="Dashboard"]').click();await page.screenshot({path:'artifacts/dashboard-desktop.png',fullPage:true});
+ const otherPage=await other.newPage();await otherPage.goto(url);await otherPage.locator('main').waitFor({state:'visible'});await go(otherPage,'Phòng');assert.equal(await otherPage.locator('.room').count(),0);await other.close();
+ await go(page,'Dashboard');await page.screenshot({path:'artifacts/dashboard-desktop.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'artifacts/dashboard-mobile.png',fullPage:true});
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Mobile layout overflow');
- await page.locator('[data-page="Công nợ"]').click();await page.locator('tbody tr').filter({hasText:'UI.201'}).locator('[data-pay]').click();await page.locator('#fields [name=note]').fill('Thu hết trên điện thoại');await page.locator('#form [type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});await page.waitForFunction(()=>!document.querySelector('#form [type=submit]').disabled);if(await page.locator('#credential-modal').isVisible())await page.locator('#credential-close').click();await page.waitForFunction(()=>document.querySelector('tbody').innerText.includes('Chưa có dữ liệu'));
- await page.locator('[data-page="Hóa đơn"]').click();assert.ok((await page.locator('tbody tr').filter({hasText:'UI.201'}).innerText()).includes('Đã thanh toán'));
+ await go(page,'Công nợ');await page.locator('tbody tr').filter({hasText:'UI.201'}).locator('[data-pay]').click();await page.locator('#fields [name=note]').fill('Thu hết trên điện thoại');await page.locator('#form [type=submit]').click();await page.locator('#modal').waitFor({state:'hidden'});await page.waitForFunction(()=>!document.querySelector('#form [type=submit]').disabled);if(await page.locator('#credential-modal').isVisible())await page.locator('#credential-close').click();await page.waitForFunction(()=>document.querySelector('tbody').innerText.includes('Chưa có dữ liệu'));
+ await go(page,'Hóa đơn');assert.ok((await page.locator('tbody tr').filter({hasText:'UI.201'}).innerText()).includes('Đã thanh toán'));
  await page.setViewportSize({width:1440,height:1000});await page.locator('#logout').click();await page.locator('#auth').waitFor({state:'visible'});
  await page.locator('#auth [name=email]').fill(email);await page.locator('#auth [name=password]').fill('test-password-12345');await page.locator('#auth-submit').click();await page.locator('main').waitFor({state:'visible'});
  assert.deepEqual(errors,[]);console.log('Browser passed: 11 screens, validation errors, full workflow, QR parameters (mock provider), repairs, historical tenant, 200 rooms, XSS escaping, second-account isolation, mobile full payment, export, logout/login; no JavaScript errors.');
