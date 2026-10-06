@@ -75,11 +75,11 @@ class Tenants(unittest.TestCase):
         app.mutate('/api/contracts',dict(room_id=1,tenant='Next tenant',phone='0900',start='2026-11-01',end='2027-11-01',deposit=0),1)
         app.mutate('/api/invoices',dict(room_id=1,month='2026-11',electric_old=150,electric_new=200,water_old=15,water_new=20),1)
         with app.connect() as db:
-            self.assertIsNone(db.execute('SELECT tenant_user_id FROM rooms WHERE id=1').fetchone()[0])
+            self.assertNotEqual(db.execute('SELECT tenant_user_id FROM rooms WHERE id=1').fetchone()[0],3)
             self.assertEqual(db.execute('SELECT count(*) FROM invoices WHERE tenant_user_id=3').fetchone()[0],1)
     def test_same_name_new_contract_does_not_claim_old_invoice(self):
         self.invoice()
-        app.mutate('/api/contracts',dict(room_id=1,tenant='Nguyễn Minh Anh',phone='0909999999',start='2026-11-01',end='2027-11-01',deposit=0),1)
+        app.mutate('/api/contracts',dict(room_id=1,tenant='Nguyễn Minh Anh',phone='0909999999',start='2026-11-01',end='2027-11-01',deposit=0,auto_account=0),1)
         self.tenant()
         with app.connect() as db:self.assertIsNone(db.execute('SELECT tenant_user_id FROM invoices').fetchone()[0])
 

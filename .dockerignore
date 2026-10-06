@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!server.py
+!public/
+!public/**
+!deploy/
+!deploy/backup_worker.py

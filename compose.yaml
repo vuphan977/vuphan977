@@ -1,0 +1,72 @@
+services:
+  app:
+    build: .
+    image: roomly:local
+    restart: unless-stopped
+    environment:
+      COOKIE_SECURE: "1"
+      SEED_DEMO: "0"
+      ALLOW_OWNER_SIGNUP: "0"
+      TRUSTED_PROXY_CIDRS: "172.30.8.0/24"
+    volumes:
+      - roomly_data:/data
+    networks:
+      - backend
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+  web:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env to the public hostname}
+      NO_PROXY: "app,localhost,127.0.0.1"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - backend
+    depends_on:
+      app:
+        condition: service_healthy
+  backup:
+    image: roomly:local
+    restart: unless-stopped
+    command: ["python", "deploy/backup_worker.py"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time; from pathlib import Path; latest=max(p.stat().st_mtime for p in Path('/data/backups').glob('roomly-[0-9]*.db')); assert time.time()-latest<int(os.environ.get('BACKUP_INTERVAL','21600'))+900"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    environment:
+      BACKUP_INTERVAL: "21600"
+      BACKUP_KEEP: "28"
+    volumes:
+      - roomly_data:/data
+    depends_on:
+      app:
+        condition: service_healthy
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 16
+volumes:
+  roomly_data:
+  caddy_data:
+  caddy_config:
+networks:
+  backend:
+    ipam:
+      config:
+        - subnet: 172.30.8.0/24

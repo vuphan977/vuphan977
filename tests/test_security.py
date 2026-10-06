@@ -99,6 +99,39 @@ class Security(unittest.TestCase):
         old=self.request(tenant,'/api/state')[1]
         self.assertEqual(len(old['rooms']),0);self.assertEqual(len(old['invoices']),1);self.assertEqual(len(old['repairs']),0)
 
+    def test_password_rotation_revokes_all_sessions(self):
+        extra=self.client()
+        self.assertEqual(self.request(extra,'/api/login',dict(email='a@example.com',password='very-secure-123'))[0],200)
+        self.assertEqual(self.request(self.a,'/api/password-change',dict(current_password='incorrect-123',new_password='replacement-password'))[0],400)
+        self.assertEqual(self.request(self.a,'/api/state')[0],200)
+        self.assertEqual(self.request(self.a,'/api/password-change',dict(current_password='very-secure-123',new_password='replacement-password'))[0],200)
+        self.assertEqual(self.request(self.a,'/api/state')[0],401);self.assertEqual(self.request(extra,'/api/state')[0],401)
+        self.assertEqual(self.request(extra,'/api/login',dict(email='a@example.com',password='very-secure-123'))[0],400)
+        self.assertEqual(self.request(extra,'/api/login',dict(email='a@example.com',password='replacement-password'))[0],200)
+        self.assertEqual(self.request(self.b,'/api/state')[0],200)
+    def test_auto_room_login_and_bank_profile_scope(self):
+        code,data=self.request(self.a,'/api/contracts',dict(room_id=1,tenant='Room account',phone='090123',start='2026-01-01',end='2026-12-31',deposit=0))
+        self.assertEqual(code,200);credentials=data['credentials'];tenant=self.client()
+        self.assertEqual(self.request(tenant,'/api/login',dict(email=credentials['login_name'],password=credentials['password']))[0],200)
+        self.assertEqual(self.request(tenant,'/api/me')[1]['user']['role'],'tenant')
+        self.request(self.a,'/api/payment-profile',dict(bank='970436',account='123456789',holder='OWNER A'))
+        self.request(self.b,'/api/payment-profile',dict(bank='970436',account='999999999',holder='OWNER B'))
+        self.invoice()
+        profiles=self.request(tenant,'/api/state')[1]['payment_profiles']
+        self.assertEqual(len(profiles),1);self.assertEqual(profiles[0]['holder'],'OWNER A')
+        self.assertEqual(self.request(tenant,'/api/payment-profile',dict(bank='970436',account='888888888',holder='Attack'))[0],403)
+        self.assertEqual(self.request(tenant,'/api/tenant-password-reset',dict(room_id=1,confirmation='P.101'))[0],403)
+        new=self.request(self.a,'/api/tenant-password-reset',dict(room_id=1,confirmation='P.101'))[1]['credentials']
+        self.assertEqual(self.request(tenant,'/api/state')[0],401)
+        self.assertEqual(self.request(tenant,'/api/login',dict(email=new['login_name'],password=new['password']))[0],200)
+    def test_owner_cannot_reset_personal_tenant_password(self):
+        invite=self.request(self.a,'/api/tenant-invite',dict(room_id=1))[1]['invite_token']
+        tenant=self.client()
+        self.request(tenant,'/api/tenant-register',dict(invite_token=invite,name='Personal',email='personal@example.com',password='personal-password-123'))
+        self.assertEqual(self.request(self.a,'/api/tenant-password-reset',dict(room_id=1,confirmation='P.101'))[0],400)
+        self.assertEqual(self.request(tenant,'/api/password-change',dict(current_password='personal-password-123',new_password='personal-password-new'))[0],200)
+        self.assertEqual(self.request(self.a,'/api/state')[0],200)
+
     def test_expired_and_forged_sessions(self):
         with app.connect() as db: db.execute('UPDATE sessions SET expires=0 WHERE user_id=1')
         self.assertEqual(self.request(self.a,'/api/state')[0],401)

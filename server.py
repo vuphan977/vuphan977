@@ -10,6 +10,10 @@ from contextlib import contextmanager, closing
 import argparse
 import calendar
 import threading
+import sys
+import unicodedata
+import ipaddress
+import getpass
 from http.cookies import SimpleCookie
 from urllib.parse import urlsplit
 from datetime import date, datetime, timedelta
@@ -74,7 +78,8 @@ def init():
             db.execute('ALTER TABLE rooms_v2 RENAME TO rooms')
             db.execute('CREATE UNIQUE INDEX rooms_owner_name ON rooms(owner_id,name)')
         for table, columns in {
-            'users': {'role': "TEXT NOT NULL DEFAULT 'owner'"},
+            'payments': {'voided':'INTEGER NOT NULL DEFAULT 0','void_reason':"TEXT NOT NULL DEFAULT ''",'voided_at':"TEXT NOT NULL DEFAULT ''"},
+            'users': {'role': "TEXT NOT NULL DEFAULT 'owner'",'login_name':'TEXT','managed_owner_id':'INTEGER','managed_room_id':'INTEGER'},
             'repairs': {'reporter_user_id':'INTEGER'},
             'rooms': {'contract_version':'INTEGER NOT NULL DEFAULT 1','people': 'INTEGER NOT NULL DEFAULT 1','water_mode': "TEXT NOT NULL DEFAULT 'meter'",'electric_rate': 'INTEGER NOT NULL DEFAULT 3500','water_rate': 'INTEGER NOT NULL DEFAULT 15000','service_fee': 'INTEGER NOT NULL DEFAULT 100000','due_day': 'INTEGER NOT NULL DEFAULT 5','remind_days': 'INTEGER NOT NULL DEFAULT 3','auto_send': 'INTEGER NOT NULL DEFAULT 1','auto_remind': 'INTEGER NOT NULL DEFAULT 1','tenant_user_id': 'INTEGER'},
             'invoices': {'contract_version':'INTEGER NOT NULL DEFAULT 1','people': 'INTEGER NOT NULL DEFAULT 1','water_mode': "TEXT NOT NULL DEFAULT 'meter'",'water_total': 'INTEGER NOT NULL DEFAULT 0','due_date': "TEXT NOT NULL DEFAULT ''",'tenant_user_id': 'INTEGER'},
@@ -86,12 +91,15 @@ def init():
                     if table=='invoices' and column=='water_total':
                         db.execute('UPDATE invoices SET water_total=(water_new-water_old)*water_rate')
         db.executescript("""
+        CREATE TABLE IF NOT EXISTS payment_profiles(owner_id INTEGER PRIMARY KEY,bank TEXT NOT NULL,account TEXT NOT NULL,holder TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS contract_history(id INTEGER PRIMARY KEY,owner_id INTEGER NOT NULL,room_id INTEGER NOT NULL,room_name TEXT NOT NULL,tenant TEXT NOT NULL,phone TEXT NOT NULL,start TEXT NOT NULL,planned_end TEXT NOT NULL,ended TEXT NOT NULL,deposit INTEGER NOT NULL,contract_version INTEGER NOT NULL,reason TEXT NOT NULL,UNIQUE(owner_id,room_id,contract_version));
         CREATE TABLE IF NOT EXISTS invitations(token_hash TEXT PRIMARY KEY,owner_id INTEGER NOT NULL,room_id INTEGER NOT NULL,tenant_name TEXT NOT NULL,expires INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY,owner_id INTEGER NOT NULL,user_id INTEGER NOT NULL,invoice_id INTEGER NOT NULL,kind TEXT NOT NULL,title TEXT NOT NULL,created TEXT NOT NULL,is_read INTEGER NOT NULL DEFAULT 0,UNIQUE(user_id,invoice_id,kind));
         """)
+        db.execute('CREATE UNIQUE INDEX IF NOT EXISTS user_login_name ON users(login_name) WHERE login_name IS NOT NULL')
         if 'contract_version' not in {r['name'] for r in db.execute('PRAGMA table_info(invitations)')}:
             db.execute('ALTER TABLE invitations ADD COLUMN contract_version INTEGER NOT NULL DEFAULT 1')
-        if not db.execute('SELECT 1 FROM rooms LIMIT 1').fetchone() and not db.execute('SELECT 1 FROM users LIMIT 1').fetchone():
+        if os.environ.get('SEED_DEMO','1')=='1' and not db.execute('SELECT 1 FROM rooms LIMIT 1').fetchone() and not db.execute('SELECT 1 FROM users LIMIT 1').fetchone():
             for i in range(1, 13):
                 db.execute('INSERT INTO rooms(name,rent,tenant,phone,start,end,deposit) VALUES(?,?,?,?,?,?,?)', (f'P.{100+i}', 2800000 if i < 7 else 3200000, ['Nguyễn Minh Anh','Trần Quốc Bảo','Lê Thu Hà','Phạm Hoàng Nam','Võ Ngọc Linh','Đặng Đức Huy','Bùi Thanh Mai','Đỗ Hải Long'][i-1] if i <= 8 else '', '0901234567' if i<=8 else '', '2026-01-01' if i<=8 else '', '2026-12-31' if i<=8 else '', 3000000 if i<=8 else 0))
 
@@ -146,6 +154,43 @@ def mutate(path, data, owner_id):
         if path == '/api/rooms':
             name = text(data,'name',80)
             db.execute('INSERT INTO rooms(name,rent,owner_id) VALUES(?,?,?)', (name, integer(data,'rent'),owner_id))
+        elif path == '/api/tenant-password-reset':
+            room=db.execute('SELECT * FROM rooms WHERE id=? AND owner_id=?',(integer(data,'room_id'),owner_id)).fetchone()
+            if not room or not room['tenant_user_id']: raise ValueError('Phòng chưa có tài khoản người thuê')
+            if data.get('confirmation')!=room['name']: raise ValueError('Nhập đúng tên phòng để cấp lại mật khẩu')
+            user=db.execute('SELECT * FROM users WHERE id=? AND managed_owner_id=? AND managed_room_id=?',(room['tenant_user_id'],owner_id,room['id'])).fetchone()
+            if not user or not user['login_name']: raise ValueError('Đây là tài khoản cá nhân; người thuê tự đổi mật khẩu trong mục Tài khoản')
+            password=secrets.token_urlsafe(16);salt=secrets.token_hex(16)
+            db.execute('UPDATE users SET salt=?,password_hash=? WHERE id=?',(salt,password_hash(password,salt),user['id']))
+            db.execute('DELETE FROM sessions WHERE user_id=?',(user['id'],))
+            return {'credentials':{'login_name':user['login_name'],'password':password,'room_name':room['name']}}
+        elif path == '/api/payment-profile':
+            bank=text(data,'bank',6);account=text(data,'account',20);holder=text(data,'holder',150)
+            if not re.fullmatch(r'[0-9]{6}',bank) or not re.fullmatch(r'[0-9]{4,20}',account): raise ValueError('Kiểm tra BIN ngân hàng 6 số và số tài khoản 4–20 số')
+            db.execute('INSERT INTO payment_profiles(owner_id,bank,account,holder) VALUES(?,?,?,?) ON CONFLICT(owner_id) DO UPDATE SET bank=excluded.bank,account=excluded.account,holder=excluded.holder',(owner_id,bank,account,holder))
+        elif path == '/api/contract-end':
+            room=db.execute('SELECT * FROM rooms WHERE id=? AND owner_id=?',(integer(data,'id'),owner_id)).fetchone()
+            if not room or not room['tenant']: raise ValueError('Không tìm thấy hợp đồng đang thuê')
+            if data.get('confirmation')!=room['name']: raise ValueError('Nhập đúng tên phòng để xác nhận')
+            ended=iso_date(data.get('ended'))
+            if ended>business_today() or ended<iso_date(room['start']): raise ValueError('Ngày trả phòng phải trong khoảng từ ngày bắt đầu đến hôm nay')
+            allow_debt=integer(data,'allow_debt',0)
+            if allow_debt not in [0,1]: raise ValueError('Thiết lập công nợ không hợp lệ')
+            debt=db.execute('SELECT COALESCE(sum(total-paid),0) FROM invoices WHERE room_id=? AND owner_id=? AND contract_version=?',(room['id'],owner_id,room['contract_version'])).fetchone()[0]
+            if debt and not allow_debt: raise ValueError('Hợp đồng còn công nợ; chọn giữ công nợ nếu vẫn kết thúc')
+            archive_contract(db,room,str(ended),text(data,'reason',500))
+            db.execute("UPDATE rooms SET tenant='',phone='',start='',end='',deposit=0,people=1,tenant_user_id=NULL,contract_version=contract_version+1 WHERE id=? AND owner_id=?",(room['id'],owner_id))
+            db.execute('DELETE FROM invitations WHERE room_id=? AND owner_id=?',(room['id'],owner_id))
+        elif path == '/api/payment-void':
+            payment=db.execute('SELECT * FROM payments WHERE id=? AND owner_id=?',(integer(data,'id'),owner_id)).fetchone()
+            if not payment: raise ValueError('Không tìm thấy khoản thu')
+            reason=text(data,'reason',500)
+            if len(reason)<3: raise ValueError('Lý do hủy cần ít nhất 3 ký tự')
+            if payment['voided']: return
+            invoice=db.execute('SELECT * FROM invoices WHERE id=? AND owner_id=?',(payment['invoice_id'],owner_id)).fetchone()
+            if not invoice or invoice['paid']<payment['amount']: raise ValueError('Dữ liệu thu tiền không khớp; cần kiểm tra trước khi hủy')
+            db.execute('UPDATE invoices SET paid=paid-? WHERE id=?',(payment['amount'],invoice['id']))
+            db.execute('UPDATE payments SET voided=1,void_reason=?,voided_at=? WHERE id=?',(reason,datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).isoformat(),payment['id']))
         elif path == '/api/room-billing':
             room=db.execute('SELECT * FROM rooms WHERE id=? AND owner_id=?',(integer(data,'id'),owner_id)).fetchone()
             if not room: raise ValueError('Không tìm thấy phòng')
@@ -181,6 +226,7 @@ def mutate(path, data, owner_id):
             db.execute('DELETE FROM payments WHERE owner_id=? AND invoice_id IN (SELECT id FROM invoices WHERE room_id=? AND owner_id=?)',(owner_id,rid,owner_id))
             db.execute('DELETE FROM invoices WHERE room_id=? AND owner_id=?',(rid,owner_id))
             db.execute('DELETE FROM repairs WHERE room_id=? AND owner_id=?',(rid,owner_id))
+            db.execute('DELETE FROM contract_history WHERE room_id=? AND owner_id=?',(rid,owner_id))
             db.execute('DELETE FROM notifications WHERE owner_id=? AND invoice_id NOT IN (SELECT id FROM invoices)',(owner_id,))
             db.execute('DELETE FROM invitations WHERE room_id=? AND owner_id=?',(rid,owner_id))
             db.execute('DELETE FROM rooms WHERE id=? AND owner_id=?',(rid,owner_id))
@@ -190,7 +236,7 @@ def mutate(path, data, owner_id):
             password=data.get('password')
             if not user or not isinstance(password,str) or not 10<=len(password)<=128 or not hmac.compare_digest(password_hash(password,user['salt']),user['password_hash']):
                 raise ValueError('Mật khẩu không đúng')
-            for table in ['notifications','invitations','payments','invoices','repairs','rooms']:
+            for table in ['payment_profiles','contract_history','notifications','invitations','payments','invoices','repairs','rooms']:
                 db.execute(f'DELETE FROM {table} WHERE owner_id=?',(owner_id,))
         elif path == '/api/invoices-batch':
             items=data.get('items')
@@ -205,10 +251,17 @@ def mutate(path, data, owner_id):
             tenant = text(data,'tenant',150)
             start, end = iso_date(data.get('start')), iso_date(data.get('end'))
             if end <= start: raise ValueError('Ngày kết thúc phải sau ngày bắt đầu')
+            if room['tenant'] and tenant!=room['tenant']:
+                archive_contract(db,room,str(business_today()),'Cập nhật người thuê')
             if tenant != room['tenant'] or text(data,'phone',30,False)!=room['phone'] or str(start)!=room['start']:
                 db.execute('UPDATE rooms SET tenant_user_id=NULL,contract_version=contract_version+1 WHERE id=?',(room['id'],))
                 db.execute('DELETE FROM invitations WHERE room_id=?',(room['id'],))
             db.execute('UPDATE rooms SET tenant=?,phone=?,start=?,end=?,deposit=? WHERE id=?',(tenant,text(data,'phone',30,False),str(start),str(end),integer(data,'deposit'),room['id']))
+            auto=integer(data,'auto_account',1)
+            if auto not in [0,1]: raise ValueError('Thiết lập tự tạo tài khoản không hợp lệ')
+            updated=db.execute('SELECT * FROM rooms WHERE id=?',(room['id'],)).fetchone()
+            if auto and not updated['tenant_user_id']:
+                return {'credentials':provision_tenant(db,updated)}
         elif path == '/api/invoices':
             create_invoice(db,data,owner_id)
         elif path == '/api/payments':
@@ -224,6 +277,7 @@ def mutate(path, data, owner_id):
                     raise ValueError('Mã yêu cầu thanh toán không hợp lệ')
                 previous=db.execute('SELECT * FROM payments WHERE owner_id=? AND request_key=?',(owner_id,request_key)).fetchone()
                 if previous:
+                    if previous['voided']: raise ValueError('Khoản thu trước đã hủy; tạo yêu cầu thu mới')
                     if (previous['invoice_id'],previous['amount'],previous['received'],previous['note'])!=(inv['id'],amount,received,note):
                         raise ValueError('Yêu cầu đã ghi nhận với dữ liệu khác; kiểm tra lịch sử thu tiền')
                     return
@@ -249,8 +303,9 @@ def authenticate(data, register=False, ip='local', tenant_invite=None):
     password = data.get('password','')
     if not isinstance(password,str) or not 10 <= len(password) <= 128:
         raise ValueError('Mật khẩu cần 10–128 ký tự')
-    if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email) or len(email)>254:
+    if register and (not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email) or len(email)>254):
         raise ValueError('Email không hợp lệ')
+    if register and email.endswith('@roomly.local'): raise ValueError('Tên miền dành riêng cho tài khoản phòng')
     now=int(time.time())
     # Persist throttling before validation: failed attempts must also count.
     with connect() as db:
@@ -277,7 +332,7 @@ def authenticate(data, register=False, ip='local', tenant_invite=None):
                 for inv in db.execute('SELECT * FROM invoices WHERE owner_id=? AND paid>0',(uid,)).fetchall():
                     db.execute('INSERT INTO payments(owner_id,invoice_id,amount,received,note) VALUES(?,?,?,?,?)',(uid,inv['id'],inv['paid'],str(business_today()),'Số dư thu từ bản MVP; ngày thu gốc chưa được ghi nhận'))
         else:
-            user=db.execute('SELECT * FROM users WHERE email=?',(email,)).fetchone()
+            user=db.execute('SELECT * FROM users WHERE email=? OR login_name=?',(email,email)).fetchone()
             salt=user['salt'] if user else '0'*32
             candidate=password_hash(password,salt)
             if not user or not hmac.compare_digest(candidate,user['password_hash']): raise ValueError('Email hoặc mật khẩu không đúng')
@@ -286,6 +341,41 @@ def authenticate(data, register=False, ip='local', tenant_invite=None):
         db.execute('DELETE FROM sessions WHERE expires<=?',(now,))
         db.execute('INSERT INTO sessions VALUES(?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),uid,now+86400))
         return token
+
+def provision_tenant(db,room):
+    slug=unicodedata.normalize('NFKD',room['name']).encode('ascii','ignore').decode().lower()
+    slug=re.sub(r'[^a-z0-9]+','-',slug).strip('-')[:40] or f'phong-{room["id"]}'
+    sequence=db.execute('SELECT COALESCE(max(id),0)+1 FROM users').fetchone()[0]
+    login=f'nha{room["owner_id"]}-{slug}-hd{room["contract_version"]}-u{sequence}'
+    password=secrets.token_urlsafe(16);salt=secrets.token_hex(16)
+    uid=db.execute('INSERT INTO users(email,name,salt,password_hash,role,login_name,managed_owner_id,managed_room_id) VALUES(?,?,?,?,?,?,?,?)',(f'{login}@roomly.local',room['tenant'],salt,password_hash(password,salt),'tenant',login,room['owner_id'],room['id'])).lastrowid
+    db.execute('UPDATE rooms SET tenant_user_id=? WHERE id=?',(uid,room['id']))
+    invitation={'room_id':room['id'],'owner_id':room['owner_id'],'tenant_name':room['tenant'],'contract_version':room['contract_version'],'token_hash':''}
+    claim_invitation(db,invitation,uid)
+    db.execute('DELETE FROM invitations WHERE room_id=? AND owner_id=?',(room['id'],room['owner_id']))
+    return {'login_name':login,'password':password,'room_name':room['name']}
+
+def archive_contract(db,room,ended,reason):
+    db.execute('INSERT OR IGNORE INTO contract_history(owner_id,room_id,room_name,tenant,phone,start,planned_end,ended,deposit,contract_version,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(room['owner_id'],room['id'],room['name'],room['tenant'],room['phone'],room['start'],room['end'],ended,room['deposit'],room['contract_version'],reason))
+
+def change_password(uid,data):
+    current=data.get('current_password');new=data.get('new_password')
+    if not isinstance(current,str) or not 10<=len(current)<=128 or not isinstance(new,str) or not 10<=len(new)<=128:
+        raise ValueError('Mật khẩu cần 10–128 ký tự')
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        user=db.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone()
+        if not user or not hmac.compare_digest(password_hash(current,user['salt']),user['password_hash']):
+            raise ValueError('Mật khẩu hiện tại không đúng')
+        salt=secrets.token_hex(16)
+        db.execute('UPDATE users SET salt=?,password_hash=? WHERE id=?',(salt,password_hash(new,salt),uid))
+        db.execute('DELETE FROM sessions WHERE user_id=?',(uid,))
+
+def reminder_interval():
+    try: interval=int(os.environ.get('REMINDER_INTERVAL','60'))
+    except ValueError: raise ValueError('REMINDER_INTERVAL cần là số nguyên từ 1 đến 300 giây')
+    if not 1<=interval<=300: raise ValueError('REMINDER_INTERVAL cần từ 1 đến 300 giây')
+    return interval
 
 def publish_invoice(db,invoice_id,owner_id,user_id,kind,title):
     db.execute('INSERT OR IGNORE INTO notifications(owner_id,user_id,invoice_id,kind,title,created) VALUES(?,?,?,?,?,?)',(owner_id,user_id,invoice_id,kind,title,datetime.now(ZoneInfo('Asia/Ho_Chi_Minh')).isoformat()))
@@ -297,6 +387,9 @@ def valid_invitation(db,token):
     return invitation
 
 def claim_invitation(db,invitation,uid):
+    user=db.execute('SELECT * FROM users WHERE id=?',(uid,)).fetchone()
+    if user['managed_room_id'] and (user['managed_room_id']!=invitation['room_id'] or user['managed_owner_id']!=invitation['owner_id']):
+        raise ValueError('Tài khoản phòng chỉ được dùng cho phòng đã cấp')
     db.execute('UPDATE rooms SET tenant_user_id=? WHERE id=? AND owner_id=?',(uid,invitation['room_id'],invitation['owner_id']))
     # Only invoices with the matching snapshot tenant are attached to this account.
     db.execute('UPDATE invoices SET tenant_user_id=? WHERE room_id=? AND owner_id=? AND tenant_name=? AND contract_version=? AND tenant_user_id IS NULL',(uid,invitation['room_id'],invitation['owner_id'],invitation['tenant_name'],invitation['contract_version']))
@@ -316,11 +409,11 @@ def run_reminders(now=None):
             if today>=due-timedelta(days=invoice['remind_days']):
                 publish_invoice(db,invoice['id'],invoice['owner_id'],invoice['tenant_user_id'],'reminder',f'Nhắc thanh toán {invoice["room_name"]} · hạn {invoice["due_date"]}')
 
-def reminder_worker(stop):
+def reminder_worker(stop,interval=60):
     while not stop.is_set():
         try: run_reminders()
-        except sqlite3.Error: pass  # Retry on the next tick; no remote messages are sent.
-        stop.wait(max(1,min(300,float(os.environ.get('REMINDER_INTERVAL','60')))))
+        except sqlite3.Error: print('Reminder worker: database unavailable; retrying next tick',file=sys.stderr)
+        stop.wait(interval)
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*args,**kwargs): super().__init__(*args,directory=str(ROOT/'public'),**kwargs)
@@ -344,9 +437,15 @@ class Handler(SimpleHTTPRequestHandler):
         if not token: return None
         digest=hashlib.sha256(token.value.encode()).hexdigest()
         with connect() as db:
-            row=db.execute('SELECT users.id,users.email,users.name,users.role FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires>?',(digest,int(time.time()))).fetchone()
+            row=db.execute('SELECT users.id,users.email,users.name,users.role,users.login_name FROM sessions JOIN users ON users.id=sessions.user_id WHERE token_hash=? AND expires>?',(digest,int(time.time()))).fetchone()
         return dict(row) if row else None
     def do_GET(self):
+        if self.path=='/healthz':
+            try:
+                with connect() as db: db.execute('SELECT 1 FROM users LIMIT 1').fetchone()
+                self.respond(200,{'ok':True})
+            except sqlite3.Error: self.respond(503,{'ok':False})
+            return
         if self.path.startswith('/api/'):
             user=self.session()
             if self.path=='/api/me':
@@ -357,10 +456,10 @@ class Handler(SimpleHTTPRequestHandler):
                 self.tenant_get(user); return
             if self.path=='/api/state':
                 with connect() as db:
-                    self.respond(200,{t:[dict(r) for r in db.execute(f'SELECT * FROM {t} WHERE owner_id=? ORDER BY id DESC',(user['id'],))] for t in ['rooms','invoices','repairs','payments']})
+                    self.respond(200,{t:[dict(r) for r in db.execute(f'SELECT * FROM {t} WHERE owner_id=? ORDER BY {'owner_id' if t=='payment_profiles' else 'id'} DESC',(user['id'],))] for t in ['rooms','invoices','repairs','payments','contract_history','payment_profiles']})
             elif self.path=='/api/export':
                 with connect() as db:
-                    self.respond(200,{'version':1,'exported':str(business_today()),'data':{t:[dict(r) for r in db.execute(f'SELECT * FROM {t} WHERE owner_id=? ORDER BY id',(user['id'],))] for t in ['rooms','invoices','repairs','payments']}})
+                    self.respond(200,{'version':1,'exported':str(business_today()),'data':{t:[dict(r) for r in db.execute(f'SELECT * FROM {t} WHERE owner_id=? ORDER BY {"owner_id" if t=="payment_profiles" else "id"}',(user['id'],))] for t in ['rooms','invoices','repairs','payments','contract_history','payment_profiles']}})
             else: self.respond(404,{'error':'Không tìm thấy API'})
         else: super().do_GET()
     def tenant_get(self,user):
@@ -372,6 +471,7 @@ class Handler(SimpleHTTPRequestHandler):
                 'notifications':[dict(r) for r in db.execute('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC',(user['id'],))],
                 'repairs':[dict(r) for r in db.execute('SELECT p.* FROM repairs p JOIN rooms r ON r.id=p.room_id AND r.owner_id=p.owner_id WHERE r.tenant_user_id=? AND p.reporter_user_id=? ORDER BY p.id DESC',(user['id'],user['id']))],
                 'payments':[],
+                'payment_profiles':[dict(r) for r in db.execute("SELECT DISTINCT p.* FROM payment_profiles p JOIN invoices i ON i.owner_id=p.owner_id WHERE i.tenant_user_id=? AND EXISTS(SELECT 1 FROM notifications n WHERE n.invoice_id=i.id AND n.user_id=i.tenant_user_id AND n.kind='invoice')",(user['id'],))],
             }
             self.respond(200,data)
     def tenant_post(self,user,data):
@@ -403,10 +503,14 @@ class Handler(SimpleHTTPRequestHandler):
             data=json.loads(self.rfile.read(length))
             if not isinstance(data,dict): raise ValueError('Dữ liệu không hợp lệ')
             if self.path in ['/api/login','/api/register','/api/tenant-register']:
-                token=authenticate(data,self.path!='/api/login',self.client_address[0],text(data,'invite_token',100) if self.path=='/api/tenant-register' else None)
+                if self.path=='/api/register' and os.environ.get('ALLOW_OWNER_SIGNUP','1')!='1':
+                    self.respond(403,{'error':'Đăng ký chủ nhà hiện chưa mở'});return
+                token=authenticate(data,self.path!='/api/login',client_ip(self.client_address[0],self.headers.get('X-Forwarded-For','')),text(data,'invite_token',100) if self.path=='/api/tenant-register' else None)
                 self.respond(200,{'ok':True},cookie=token); return
             user=self.session()
             if not user: self.respond(401,{'error':'Vui lòng đăng nhập'}); return
+            if self.path=='/api/password-change':
+                change_password(user['id'],data);self.respond(200,{'ok':True},cookie='');return
             if self.path=='/api/logout':
                 cookies=SimpleCookie(self.headers.get('Cookie',''))
                 digest=hashlib.sha256(cookies['roomly_session'].value.encode()).hexdigest()
@@ -456,18 +560,52 @@ def restore(source):
             target.execute('DELETE FROM sessions')
     print('Đã khôi phục; phiên đăng nhập đã được thu hồi')
 
+def client_ip(peer, forwarded):
+    # Only a configured, isolated reverse proxy may supply the client address.
+    trusted=[ipaddress.ip_network(value.strip()) for value in os.environ.get('TRUSTED_PROXY_CIDRS','').split(',') if value.strip()]
+    if any(ipaddress.ip_address(peer) in network for network in trusted):
+        try: return str(ipaddress.ip_address(forwarded.split(',')[-1].strip()))
+        except ValueError: pass
+    return peer
+
+def reset_owner_password(email,password):
+    password=text({'password':password},'password',128)
+    if len(password)<10: raise ValueError('Mật khẩu cần ít nhất 10 ký tự')
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        user=db.execute("SELECT id FROM users WHERE email=? AND role='owner'",(email.strip().lower(),)).fetchone()
+        if not user: raise ValueError('Không tìm thấy chủ nhà')
+        salt=secrets.token_hex(16)
+        db.execute('UPDATE users SET salt=?,password_hash=? WHERE id=?',(salt,password_hash(password,salt),user['id']))
+        db.execute('DELETE FROM sessions WHERE user_id=?',(user['id'],))
+
 if __name__ == '__main__':
     parser=argparse.ArgumentParser()
-    parser.add_argument('command',nargs='?',choices=['serve','backup','restore'],default='serve')
+    parser.add_argument('command',nargs='?',choices=['serve','backup','restore','create-owner','reset-owner-password'],default='serve')
     parser.add_argument('file',nargs='?')
+    parser.add_argument('--name',default='Chủ nhà')
     args=parser.parse_args()
     if args.command=='serve':
+        interval=reminder_interval()
         init()
         stop=threading.Event()
-        threading.Thread(target=reminder_worker,args=(stop,),daemon=True).start()
+        threading.Thread(target=reminder_worker,args=(stop,interval),daemon=True).start()
         try:
             ThreadingHTTPServer(('0.0.0.0',int(os.environ.get('PORT','3000'))),Handler).serve_forever()
         finally: stop.set()
+    elif args.command in ['create-owner','reset-owner-password']:
+        if not args.file: parser.error('Cần email chủ nhà')
+        password=getpass.getpass('Mật khẩu chủ nhà: ')
+        if password!=getpass.getpass('Nhập lại mật khẩu: '): parser.error('Mật khẩu không khớp')
+        if args.command=='create-owner':
+            init()
+            token=authenticate({'name':args.name,'email':args.file,'password':password},True)
+            with connect() as db:
+                db.execute('DELETE FROM sessions WHERE token_hash=?',(hashlib.sha256(token.encode()).hexdigest(),))
+            print('Đã tạo chủ nhà; mật khẩu không được lưu dạng văn bản')
+        else:
+            reset_owner_password(args.file,password)
+            print('Đã đổi mật khẩu chủ nhà và thu hồi các phiên đăng nhập')
     elif not args.file: parser.error('Cần đường dẫn tệp')
     elif args.command=='backup': backup(args.file)
     else: restore(args.file)

@@ -26,7 +26,7 @@ Nâng cấp từ bản cũ tự sao lưu SQLite thành `data/app.db.before-auth-
 6. Báo hỏng, tiếp nhận và hoàn tất.
 7. Mục Dữ liệu tải JSON của riêng tài khoản; không bao gồm mật khẩu/phiên đăng nhập. Tệp JSON này dùng lưu trữ/đối chiếu, chưa hỗ trợ nhập lại qua giao diện.
 
-Mỗi chủ nhà chỉ đọc/sửa dữ liệu của mình; tên phòng có thể trùng giữa hai chủ nhà. Thông tin tài khoản ngân hàng lưu cục bộ trong trình duyệt theo tài khoản, không lưu vào database.
+Mỗi chủ nhà chỉ đọc/sửa dữ liệu của mình; tên phòng có thể trùng giữa hai chủ nhà. Thông tin ngân hàng lưu trong database theo chủ nhà; người thuê chỉ nhận thông tin của chủ nhà có hóa đơn đã gửi cho mình.
 
 ## Sao lưu và khôi phục cho người vận hành
 
@@ -52,7 +52,7 @@ python -m unittest discover -s tests -v
 node --check public/app.js
 ```
 
-Bao gồm 41 kiểm thử: nghiệp vụ hóa đơn, thanh toán một phần, dữ liệu qua khởi động lại, đăng nhập/đăng xuất, CSRF, tách dữ liệu, yêu cầu thu tiền đồng thời, giới hạn đăng nhập, phiên hết hạn/giả mạo, yêu cầu thu tiền gửi lại đồng thời, dữ liệu sai kiểu, lịch sử người thuê và vòng sao lưu/khôi phục.
+Bao gồm 56 kiểm thử: nghiệp vụ hóa đơn, thanh toán một phần, dữ liệu qua khởi động lại, đăng nhập/đăng xuất, CSRF, tách dữ liệu, yêu cầu thu tiền đồng thời, giới hạn đăng nhập, phiên hết hạn/giả mạo, yêu cầu thu tiền gửi lại đồng thời, dữ liệu sai kiểu, lịch sử người thuê và vòng sao lưu/khôi phục.
 
 Kiểm thử trình duyệt cần Playwright và Chromium. Trong cloud hiện tại chúng có sẵn. Chạy với database riêng, không dùng dữ liệu vận hành:
 
@@ -62,7 +62,7 @@ APP_DB=/tmp/roomly-browser-test.db PORT=3001 python server.py
 TEST_URL=http://127.0.0.1:3001 node tests/browser.cjs
 ```
 
-Bài test tạo tài khoản và dữ liệu thử, qua 11 màn hình, dữ liệu 200 phòng, tách tài khoản, chống chèn HTML, thu tiền trên điện thoại, xử lý báo hỏng, lịch sử người thuê và các thao tác chính; QR được kiểm tra tham số bằng dịch vụ giả lập, không phải chuyển khoản ngân hàng thực. Ngày mặc định theo múi giờ Việt Nam. Ảnh desktop/mobile lưu ở `artifacts/` (không đưa vào Git).
+Bài test tạo tài khoản và dữ liệu thử, qua các màn hình chủ nhà và người thuê, dữ liệu 200 phòng, tách tài khoản, chống chèn HTML, thu tiền trên điện thoại, xử lý báo hỏng, lịch sử người thuê và các thao tác chính; QR được kiểm tra tham số bằng dịch vụ giả lập, không phải chuyển khoản ngân hàng thực. Ngày mặc định theo múi giờ Việt Nam. Ảnh desktop/mobile lưu ở `artifacts/` (không đưa vào Git).
 
 ## Trước khi bán SaaS công khai
 
@@ -96,10 +96,10 @@ Hóa đơn một phòng tự lấy đơn giá/phí đã lưu và có bảng tạ
 
 ### Liên kết tài khoản người thuê
 
-1. Chủ nhà tạo hợp đồng và cài đặt tính tiền.
+1. Nếu muốn dùng tài khoản cá nhân/email, chọn **Tắt: dùng liên kết mời** khi tạo hợp đồng; mặc định hệ thống tự cấp tài khoản phòng (xem bên dưới). Chủ nhà cài đặt tính tiền.
 2. Chọn **Mời người thuê** ở phòng, sao chép liên kết và gửi cho đúng người thuê qua kênh bạn sử dụng.
 3. Người thuê mở liên kết và tự tạo tài khoản; hoặc đăng nhập tài khoản người thuê đã có để nhận lời mời. Liên kết dùng một lần, hết hạn sau 7 ngày. Tạo lời mời mới thu hồi lời mời cũ. Tài khoản chủ nhà không thể dùng lời mời để nhận quyền người thuê.
-4. Người thuê có ba mục: **Hóa đơn của tôi**, **Thông báo**, **Báo hỏng**. Chỉ xem hóa đơn được gửi cho mình và báo hỏng do mình tạo; không được ghi nhận thu tiền, sửa phòng/giá hoặc reset.
+4. Người thuê có bốn mục: **Hóa đơn của tôi**, **Thông báo**, **Báo hỏng**, **Tài khoản**. Chỉ xem hóa đơn được gửi cho mình và báo hỏng do mình tạo; không được ghi nhận thu tiền, sửa phòng/giá hoặc reset.
 
 Mỗi phòng hiện liên kết **một tài khoản đại diện người thuê**; số người tính tiền nước có thể lớn hơn một. Chưa hỗ trợ nhiều tài khoản đồng cư trú cùng phòng. Người thuê có thể liên kết nhiều phòng. Khi đổi tên người thuê, điện thoại hoặc ngày bắt đầu hợp đồng, liên kết cũ bị gỡ; cần mời lại. Hóa đơn cũ vẫn thuộc tài khoản cũ. Có mã phiên hợp đồng để tránh gửi hóa đơn của hợp đồng trước cho người thuê mới trùng tên.
 
@@ -120,3 +120,37 @@ TEST_URL=http://127.0.0.1:3001 node tests/browser-tenants.cjs
 ```
 
 Bài test cấu hình 3 người, nước theo người, điện theo chỉ số, nhận lời mời, tự gửi hóa đơn, chạy worker nhắc hạn thực, xem từng khoản, đánh dấu đã đọc, báo hỏng và chặn thao tác quản trị từ tài khoản người thuê. Không có gửi ra dịch vụ bên ngoài.
+
+## Tự cấp tài khoản theo phòng (mặc định)
+
+Khi chủ nhà tạo hoặc cập nhật hợp đồng cho phòng chưa có tài khoản người thuê, hệ thống tự tạo tài khoản đại diện phòng và liên kết ngay. **Tên đăng nhập** dựa trên mã chủ nhà, tên phòng, phiên hợp đồng và mã tài khoản để không trùng giữa các nhà/phòng. **Mật khẩu ngẫu nhiên chỉ xuất hiện một lần** trong cửa sổ sau khi lưu; chủ nhà sao chép và giao riêng cho người thuê. Đóng cửa sổ sẽ xóa mật khẩu khỏi nội dung giao diện. Database chỉ lưu băm PBKDF2 có salt, không lưu mật khẩu gốc.
+
+Người thuê mở địa chỉ ứng dụng, nhập tên phòng đã được cấp vào ô **Email hoặc tên đăng nhập phòng** cùng mật khẩu. Không cần tự đăng ký. Các địa chỉ `@roomly.local` trong DB chỉ là mã nội bộ, không phải email gửi thư.
+
+- Khi đổi tên người thuê, số điện thoại hoặc ngày bắt đầu hợp đồng, cấp tài khoản mới nếu bật tự tạo. Tài khoản cũ giữ các hóa đơn của hợp đồng cũ; người thuê mới không thấy lịch sử đó.
+- Lưu lại cùng thông tin khi phòng đã liên kết không tạo tài khoản hoặc hiện lại mật khẩu.
+- **Phòng → Cấp lại mật khẩu phòng** yêu cầu nhập tên phòng, sinh mật khẩu mới và thu hồi các phiên của tài khoản phòng. Chỉ áp dụng tài khoản tự cấp do chính chủ nhà quản lý; không cho chủ nhà đổi mật khẩu tài khoản email cá nhân của người thuê.
+- Tài khoản tự cấp chỉ nhận quyền cho phòng đã cấp, không được dùng lời mời để nhận thêm phòng/chủ nhà khác. Tài khoản email cá nhân vẫn có thể nhận các lời mời hợp lệ.
+- **Tài khoản → Đổi mật khẩu** có ở cả chủ nhà và người thuê. Yêu cầu mật khẩu hiện tại, tối thiểu 10 ký tự và đăng nhập lại; thu hồi tất cả phiên của tài khoản đó. Chưa có khôi phục mật khẩu qua email khi người dùng quên mật khẩu.
+
+## Chốt hợp đồng, hủy thu nhầm và QR người thuê
+
+**Hợp đồng → Trả phòng**: nhập tên phòng, ngày trả, lý do. Nếu còn nợ, mặc định chặn; chủ nhà có thể chọn **Cho kết thúc và giữ công nợ**. Phòng về trống, số người về 1, ngắt tài khoản hiện tại và giữ lịch sử hợp đồng, tiền cọc đã ghi, hóa đơn, công nợ và các khoản thu. Đây không phải thao tác hoàn cọc tự động. Khi thay người thuê trực tiếp, hợp đồng trước cũng được ghi lịch sử.
+
+**Lịch sử thu tiền → Hủy khoản thu**: nhập lý do, đánh dấu khoản thu đã hủy và khôi phục công nợ tương ứng. Bản ghi gốc còn trong nhật ký, có thời điểm/lý do hủy; dashboard bỏ các khoản đã hủy. Hủy lặp lại không trừ tiền hai lần. Mã yêu cầu của khoản thu đã hủy không thể dùng để ghi lại; muốn thu lại phải tạo khoản thu mới. Thao tác không thực hiện hoàn tiền ngân hàng.
+
+**Dữ liệu → Cài đặt nhận thanh toán**: lưu BIN ngân hàng, số tài khoản và tên người nhận ở chủ nhà. Người thuê chỉ được xem thông tin nhận tiền của chủ nhà có hóa đơn đã gửi cho mình và có thể mở QR từ hóa đơn còn nợ. QR dùng tài khoản nhận tiền hiện tại của chủ nhà, không phải bản chụp lịch sử ngân hàng; kiểm tra người nhận trước khi chuyển. QR đã kiểm tra tham số qua dịch vụ giả lập; chưa có giao dịch/đối soát ngân hàng thực.
+
+Kiểm thử thao tác vận hành bổ sung, dùng database riêng và cổng riêng để không chia sẻ giới hạn đăng nhập với các suite khác:
+
+```sh
+APP_DB=/tmp/roomly-account-browser.db PORT=3002 REMINDER_INTERVAL=1 python server.py
+# Terminal khác
+TEST_URL=http://127.0.0.1:3002 node tests/browser-operations.cjs
+```
+
+Không chạy các bài test trình duyệt trên DB vận hành. Chúng thực sự tạo tài khoản, đổi mật khẩu, kết thúc hợp đồng, hủy khoản thu và reset fixture.
+
+## Triển khai vận hành
+
+Xem [hướng dẫn Docker + HTTPS + sao lưu](deploy/README.md). Bộ triển khai đóng đăng ký chủ nhà công khai, tắt dữ liệu mẫu và lưu database trong volume riêng. Cần nghiệm thu trên máy chủ/tên miền thật, sao lưu ngoài máy và giám sát trước khi dùng thương mại.

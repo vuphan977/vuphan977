@@ -1,0 +1,11 @@
+{$DOMAIN} {
+    encode gzip
+    request_body {
+        max_size 128KB
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Frame-Options "DENY"
+    }
+    reverse_proxy app:3000
+}
