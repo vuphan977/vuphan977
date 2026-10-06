@@ -77,6 +77,28 @@ class Security(unittest.TestCase):
         self.request(self.a,'/api/login',dict(email='a@example.com',password='very-secure-123'))
         self.assertEqual(self.request(self.a,'/api/state')[1]['invoices'][0]['paid'],0)
         self.assertTrue(list(Path(self.tmp.name).glob('*.bak')))
+    def test_tenant_http_access_and_report_scope(self):
+        self.invoice()
+        code,invitation=self.request(self.a,'/api/tenant-invite',dict(room_id=1))
+        self.assertEqual(code,200)
+        tenant=self.client()
+        code,_=self.request(tenant,'/api/tenant-register',dict(invite_token=invitation['invite_token'],name='Tenant',email='tenant@example.com',password='tenant-password-123'))
+        self.assertEqual(code,200)
+        self.assertEqual(self.request(tenant,'/api/me')[1]['user']['role'],'tenant')
+        state=self.request(tenant,'/api/state')[1]
+        self.assertEqual(len(state['rooms']),1);self.assertEqual(len(state['invoices']),1);self.assertEqual(len(state['notifications']),1)
+        for route,data in [('/api/payments',dict(id=1,amount=1)),('/api/room-delete',dict(id=1,confirmation='P.101')),('/api/reset',dict(confirmation='XÓA DỮ LIỆU',password='tenant-password-123')),('/api/rooms',dict(name='Attack',rent=1)),('/api/room-billing',dict(id=1,people=10))]:
+            self.assertEqual(self.request(tenant,route,data)[0],403,route)
+        self.assertEqual(self.request(tenant,'/api/export')[0],403)
+        self.assertEqual(self.request(tenant,'/api/repairs',dict(room_id=2,description='Attack'))[0],400)
+        self.assertEqual(self.request(tenant,'/api/repairs',dict(room_id=1,description='Tenant report'))[0],200)
+        self.assertEqual(len(self.request(tenant,'/api/state')[1]['repairs']),1)
+        self.assertEqual(self.request(tenant,'/api/notification-read',dict(id=state['notifications'][0]['id']))[0],200)
+        self.assertEqual(self.request(tenant,'/api/notification-read',dict(id=999))[0],400)
+        self.request(self.a,'/api/contracts',dict(room_id=1,tenant='Next person',phone='0901',start='2027-01-01',end='2027-12-31',deposit=0))
+        old=self.request(tenant,'/api/state')[1]
+        self.assertEqual(len(old['rooms']),0);self.assertEqual(len(old['invoices']),1);self.assertEqual(len(old['repairs']),0)
+
     def test_expired_and_forged_sessions(self):
         with app.connect() as db: db.execute('UPDATE sessions SET expires=0 WHERE user_id=1')
         self.assertEqual(self.request(self.a,'/api/state')[0],401)

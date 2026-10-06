@@ -52,7 +52,7 @@ python -m unittest discover -s tests -v
 node --check public/app.js
 ```
 
-Bao gồm 29 kiểm thử: nghiệp vụ hóa đơn, thanh toán một phần, dữ liệu qua khởi động lại, đăng nhập/đăng xuất, CSRF, tách dữ liệu, yêu cầu thu tiền đồng thời, giới hạn đăng nhập, phiên hết hạn/giả mạo, yêu cầu thu tiền gửi lại đồng thời, dữ liệu sai kiểu, lịch sử người thuê và vòng sao lưu/khôi phục.
+Bao gồm 41 kiểm thử: nghiệp vụ hóa đơn, thanh toán một phần, dữ liệu qua khởi động lại, đăng nhập/đăng xuất, CSRF, tách dữ liệu, yêu cầu thu tiền đồng thời, giới hạn đăng nhập, phiên hết hạn/giả mạo, yêu cầu thu tiền gửi lại đồng thời, dữ liệu sai kiểu, lịch sử người thuê và vòng sao lưu/khôi phục.
 
 Kiểm thử trình duyệt cần Playwright và Chromium. Trong cloud hiện tại chúng có sẵn. Chạy với database riêng, không dùng dữ liệu vận hành:
 
@@ -66,7 +66,7 @@ Bài test tạo tài khoản và dữ liệu thử, qua 11 màn hình, dữ li�
 
 ## Trước khi bán SaaS công khai
 
-Đây là bản phát triển, chưa triển khai production. Cần reverse proxy HTTPS và `COOKIE_SECURE=1` (chỉ bật khi truy cập HTTPS), server triển khai phù hợp, xác minh email/khôi phục mật khẩu, theo dõi lỗi, sao lưu định kỳ ngoài máy, quản lý thuê bao và đối soát ngân hàng. Bộ giới hạn IP đang dùng IP kết nối trực tiếp; khi qua proxy cần cấu hình chính xác IP khách hàng. Hợp đồng là bản ghi thời hạn, chưa có văn bản pháp lý hoặc lịch sử thay đổi người thuê. Nhật ký hiện theo dõi các khoản thu, chưa phải audit log mọi thay đổi hệ thống. Chưa có thông báo tự động, AI hoặc tính phí thuê bao.
+Đây là bản phát triển, chưa triển khai production. Cần reverse proxy HTTPS và `COOKIE_SECURE=1` (chỉ bật khi truy cập HTTPS), server triển khai phù hợp, xác minh email/khôi phục mật khẩu, theo dõi lỗi, sao lưu định kỳ ngoài máy, quản lý thuê bao và đối soát ngân hàng. Bộ giới hạn IP đang dùng IP kết nối trực tiếp; khi qua proxy cần cấu hình chính xác IP khách hàng. Hợp đồng là bản ghi thời hạn, chưa có văn bản pháp lý hoặc lịch sử thay đổi người thuê. Nhật ký hiện theo dõi các khoản thu, chưa phải audit log mọi thay đổi hệ thống. Có thông báo hóa đơn và nhắc hạn trong ứng dụng khi server đang chạy; chưa có email/Zalo, AI hoặc tính phí thuê bao.
 
 ## Xóa phòng, reset và chốt tháng (bản mới)
 
@@ -82,3 +82,41 @@ TEST_URL=http://127.0.0.1:3001 node tests/browser-management.cjs
 ```
 
 Bài test này thực sự xóa/reset dữ liệu của tài khoản thử do chính nó tạo. Không chạy trên cơ sở dữ liệu vận hành.
+
+## Điện, nước theo người và tài khoản người thuê
+
+**Phòng → Điện nước / Nhắc thu** cho phép lưu riêng từng phòng:
+
+- Đơn giá một số điện (kWh). Tiền điện = (chỉ số chốt − chỉ số đầu) × đơn giá.
+- Số người (1–50) và cách tính nước: **Theo đồng hồ** = (chốt − đầu) × giá/m³; **Theo người** = số người × giá/người/tháng. Khi theo người, không cần nhập chỉ số nước.
+- Phí dịch vụ cố định theo tháng, ngày thu tiền (1–31), nhắc trước 0–30 ngày.
+- Bật/tắt tự gửi hóa đơn và nhắc hạn trong ứng dụng. Ngày thu 31 được điều chỉnh về ngày cuối tháng ngắn hơn.
+
+Hóa đơn một phòng tự lấy đơn giá/phí đã lưu và có bảng tạm tính. Lập hàng loạt mặc định dùng cài đặt của từng phòng; các ô đơn giá chung để trống. Nếu cần, nhập đơn giá chung để ghi đè cho lượt lập đó. Hóa đơn lưu số người, cách tính nước, đơn giá, tiền phòng, điện, nước, dịch vụ và hạn thu tại thời điểm lập; các thay đổi cài đặt sau không sửa hóa đơn cũ. Nút **Chi tiết** hiển thị bảng tiền từng khoản và **In / Lưu PDF** qua trình duyệt.
+
+### Liên kết tài khoản người thuê
+
+1. Chủ nhà tạo hợp đồng và cài đặt tính tiền.
+2. Chọn **Mời người thuê** ở phòng, sao chép liên kết và gửi cho đúng người thuê qua kênh bạn sử dụng.
+3. Người thuê mở liên kết và tự tạo tài khoản; hoặc đăng nhập tài khoản người thuê đã có để nhận lời mời. Liên kết dùng một lần, hết hạn sau 7 ngày. Tạo lời mời mới thu hồi lời mời cũ. Tài khoản chủ nhà không thể dùng lời mời để nhận quyền người thuê.
+4. Người thuê có ba mục: **Hóa đơn của tôi**, **Thông báo**, **Báo hỏng**. Chỉ xem hóa đơn được gửi cho mình và báo hỏng do mình tạo; không được ghi nhận thu tiền, sửa phòng/giá hoặc reset.
+
+Mỗi phòng hiện liên kết **một tài khoản đại diện người thuê**; số người tính tiền nước có thể lớn hơn một. Chưa hỗ trợ nhiều tài khoản đồng cư trú cùng phòng. Người thuê có thể liên kết nhiều phòng. Khi đổi tên người thuê, điện thoại hoặc ngày bắt đầu hợp đồng, liên kết cũ bị gỡ; cần mời lại. Hóa đơn cũ vẫn thuộc tài khoản cũ. Có mã phiên hợp đồng để tránh gửi hóa đơn của hợp đồng trước cho người thuê mới trùng tên.
+
+### Gửi hóa đơn và nhắc hạn
+
+- Nếu bật tự gửi và đã liên kết tài khoản, hóa đơn mới được gửi vào tài khoản người thuê ngay khi tạo, trong cùng giao dịch lưu hóa đơn. Nếu liên kết sau, gửi các hóa đơn phù hợp của hợp đồng hiện tại.
+- Nếu tắt tự gửi, hóa đơn chưa hiển thị cho người thuê. Chủ nhà bấm **Gửi hóa đơn** để gửi thủ công. Gửi lại không tạo thông báo trùng.
+- Tác vụ nền chạy mỗi 60 giây khi `python server.py` hoạt động, gửi một thông báo nhắc cho hóa đơn đã gửi, còn nợ và đến mốc nhắc. Nếu server vừa khởi động lại sau mốc này, tác vụ sẽ kiểm tra và gửi bù. Không lặp lại hằng ngày, không nhắc hóa đơn đã thu đủ. Cài đặt bật/tắt và số ngày nhắc hiện tại của phòng được áp dụng cho tác vụ; ngày hạn trên hóa đơn giữ nguyên.
+- Đây là **thông báo bên trong ứng dụng**, được lưu để người thuê đọc khi đăng nhập; giao diện người thuê cập nhật mỗi 15 giây khi tab đang mở, không có cửa sổ nhập liệu; chưa có push trên điện thoại, email hoặc Zalo. Máy/server phải hoạt động để tác vụ chạy. Chủ nhà vẫn ghi nhận thu tiền thủ công, chưa có đối soát ngân hàng.
+- Link mời dùng địa chỉ mà chủ nhà đang mở. Nếu là localhost trên máy chủ nhà, người thuê trên máy khác không mở được; cần triển khai lên địa chỉ truy cập chung. Khi thử trên một máy, mở link bằng cửa sổ ẩn danh/trình duyệt khác.
+
+Kiểm thử cổng người thuê trên database riêng, rút ngắn chu kỳ nhắc để kiểm chứng worker thực tế:
+
+```sh
+APP_DB=/tmp/roomly-portal-test.db PORT=3001 REMINDER_INTERVAL=1 python server.py
+# Terminal khác
+TEST_URL=http://127.0.0.1:3001 node tests/browser-tenants.cjs
+```
+
+Bài test cấu hình 3 người, nước theo người, điện theo chỉ số, nhận lời mời, tự gửi hóa đơn, chạy worker nhắc hạn thực, xem từng khoản, đánh dấu đã đọc, báo hỏng và chặn thao tác quản trị từ tài khoản người thuê. Không có gửi ra dịch vụ bên ngoài.
